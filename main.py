@@ -2,6 +2,7 @@ import numpy as np
 from utils import say
 from llm import run_llm
 import whisper
+from scipy.io.wavfile import write as wavwrite
 
 import os
 import time
@@ -36,7 +37,7 @@ mycroft_hw = HotwordDetector(
     hotword="mycroft",
     model = hotword_base_model,
     reference_file=os.path.join(samples_loc, "mycroft_ref.json"),
-    threshold=0.5,
+    threshold=0.7,
     relaxation_time=2
 )
 
@@ -46,7 +47,12 @@ mic_stream = SimpleMicStream(
     sliding_window_secs=sliding_window_secs,
 )
 
-whisperModel = whisper.load_model("tiny.en")
+whisperModel = whisper.load_model("base.en")
+
+def restart_mic_stream():
+    mic_stream.close_stream()
+    mic_stream.start_stream()
+    mic_stream.getFrame()
 
 
 if __name__ == "__main__":
@@ -58,40 +64,43 @@ if __name__ == "__main__":
     recordedArray = []
     lastHotwordSecond = time.time()
     while True :
-        frame = mic_stream.getFrame()
+        frame = mic_stream.getFrame().astype(np.int16)
 
         if recordState is False:
-            result = mycroft_hw.scoreFrame(frame)
+            result = mycroft_hw.scoreFrame(frame.copy())
             if result==None :
                 #no voice activity
                 continue
             if(result["match"]):
-                say("listening")
+                say("listening.")
+                restart_mic_stream()
                 recordState = True
                 lastHotwordSecond = time.time()
         else:
             # The actual length is every sliding_window_secs time
+            frame = frame[int(sliding_window_secs * 16000):].copy()
             normalizedframe = (
-                frame.astype('float32') / 32768)
-            # [int(sliding_window_secs * 16000):]
+                frame.astype('float32') * (1 / 32768.0))
             vadExists = checkVad(normalizedframe)
 
             if vadExists:
                 lastHotwordSecond = time.time()
+
+            if (time.time() - lastHotwordSecond) < 2.0:
+                recordedArray.append(normalizedframe)
             else:
-                if (time.time() - lastHotwordSecond) < 1.0:
-                    recordedArray.append(normalizedframe)
-                else:
-                    say("transcribing")
-                    print(np.concatenate(recordedArray).shape)
-                    print(np.concatenate(recordedArray).dtype)
-                    result = whisperModel.transcribe(np.concatenate(recordedArray), language="english", fp16=torch.cuda.is_available())
-                    print(result["text"])
-                    run_llm(result["text"])
-                    recordState = False
-                    recordedArray = []
-                    mic_stream.close_stream()
-                    mic_stream.start_stream()
+                say("processing")
+                # wavwrite('test.wav', 16000, np.concatenate(recordedArray, dtype=np.float32))
+                result = whisperModel.transcribe(
+                    np.concatenate(recordedArray, dtype=np.float32),
+                    language="english",
+                    fp16=torch.cuda.is_available(),
+                )
+                print(result["text"].strip())
+                run_llm(result["text"].strip())
+                recordState = False
+                recordedArray = []
+                restart_mic_stream()
 
         # if vadExists or (recordState == True and (time.time() - lastHotwordSecond) < 0.5):
         #     print("vad")
