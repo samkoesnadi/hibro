@@ -5,7 +5,7 @@ from llama_cpp import Llama
 
 from utils import say, control_lamp_function
 
-TOKEN_LENGTH = 1024
+TOKEN_LENGTH = 256
 
 llm = Llama(
     model_path="/home/samkoesnadi/models/Llama-2-7b-chat-hf-function-calling-v3.Q5_K_M.gguf",

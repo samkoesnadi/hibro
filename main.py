@@ -15,39 +15,38 @@ from eff_word_net import samples_loc
 
 
 import torch
-model, _ = torch.hub.load(repo_or_dir='snakers4/silero-vad',
+vadModel, _ = torch.hub.load(repo_or_dir='snakers4/silero-vad',
                               model='silero_vad',
                               force_reload=False,
                               onnx=True)
 
 def checkVad(frame, window_size_samples = 1536, vadThreshold = 0.7):
     for i in range(0, len(frame), window_size_samples):
-        chunk = frame[i: i+ window_size_samples].astype('float32') / 32768
-        print(chunk)
+        chunk = frame[i: i+ window_size_samples]
         if len(chunk) < window_size_samples:
             break
-        new_confidence = model(torch.from_numpy(chunk), 16000).item()
+        new_confidence = vadModel(torch.from_numpy(chunk), 16000).item()
         
         if new_confidence >= vadThreshold:
             return True
     return False
 
-base_model = Resnet50_Arc_loss()
-
+hotword_base_model = Resnet50_Arc_loss()
 mycroft_hw = HotwordDetector(
     hotword="mycroft",
-    model = base_model,
+    model = hotword_base_model,
     reference_file=os.path.join(samples_loc, "mycroft_ref.json"),
-    threshold=0.7,
+    threshold=0.5,
     relaxation_time=2
 )
 
+sliding_window_secs = 0.75
 mic_stream = SimpleMicStream(
     window_length_secs=1.5,
-    sliding_window_secs=0.75,
+    sliding_window_secs=sliding_window_secs,
 )
 
-model = whisper.load_model("tiny.en")
+whisperModel = whisper.load_model("tiny.en")
 
 
 if __name__ == "__main__":
@@ -57,28 +56,64 @@ if __name__ == "__main__":
 
     recordState = False
     recordedArray = []
+    lastHotwordSecond = time.time()
     while True :
         frame = mic_stream.getFrame()
-        normalizedframe = frame
-        vadExists = checkVad(normalizedframe)
 
-        if vadExists:
-            if recordState:
-                recordedArray.append(normalizedframe)
-            else:
-                result = mycroft_hw.scoreFrame(frame)
-                if result==None :
-                    #no voice activity
-                    continue
-                if(result["match"]):
-                    say("listening")
-                    recordState = True
+        if recordState is False:
+            result = mycroft_hw.scoreFrame(frame)
+            if result==None :
+                #no voice activity
+                continue
+            if(result["match"]):
+                say("listening")
+                recordState = True
+                lastHotwordSecond = time.time()
         else:
-            if recordState:
-                say("transcribing")
-                result = model.transcribe(np.concatenate(recordedArray))
-                say("running llm")
-                print(result["text"])
-                run_llm(result["text"])
-                recordState = False
-                recordedArray = []
+            # The actual length is every sliding_window_secs time
+            normalizedframe = (
+                frame.astype('float32') / 32768)
+            # [int(sliding_window_secs * 16000):]
+            vadExists = checkVad(normalizedframe)
+
+            if vadExists:
+                lastHotwordSecond = time.time()
+            else:
+                if (time.time() - lastHotwordSecond) < 1.0:
+                    recordedArray.append(normalizedframe)
+                else:
+                    say("transcribing")
+                    print(np.concatenate(recordedArray).shape)
+                    print(np.concatenate(recordedArray).dtype)
+                    result = whisperModel.transcribe(np.concatenate(recordedArray), language="english", fp16=torch.cuda.is_available())
+                    print(result["text"])
+                    run_llm(result["text"])
+                    recordState = False
+                    recordedArray = []
+                    mic_stream.close_stream()
+                    mic_stream.start_stream()
+
+        # if vadExists or (recordState == True and (time.time() - lastHotwordSecond) < 0.5):
+        #     print("vad")
+        #     if recordState:
+        #         recordedArray.append(normalizedframe)
+        #     else:
+        #         result = mycroft_hw.scoreFrame(frame)
+        #         if result==None :
+        #             #no voice activity
+        #             continue
+        #         if(result["match"]):
+        #             say("listening")
+        #             recordState = True
+        #             lastHotwordSecond = time.time()
+        # else:
+        #     if recordState:
+        #         say("transcribing")
+        #         print(np.concatenate(recordedArray).shape)
+        #         print(np.concatenate(recordedArray).dtype)
+        #         result = whisperModel.transcribe(np.concatenate(recordedArray))
+        #         say("running llm")
+        #         print(result["text"])
+        #         run_llm(result["text"])
+        #         recordState = False
+        #         recordedArray = []
