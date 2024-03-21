@@ -34,20 +34,21 @@ def checkVad(frame, window_size_samples = 1536, vadThreshold = 0.7):
 
 hotword_base_model = Resnet50_Arc_loss()
 mycroft_hw = HotwordDetector(
-    hotword="mycroft",
+    hotword="hey bro",
     model = hotword_base_model,
-    reference_file=os.path.join(samples_loc, "mycroft_ref.json"),
+    reference_file=os.path.join("/home/samkoesnadi/experiments/hibro_samples_json", "hey bro_ref.json"),
     threshold=0.7,
     relaxation_time=2
 )
 
 sliding_window_secs = 0.75
+window_length_secs = 1.5
 mic_stream = SimpleMicStream(
-    window_length_secs=1.5,
+    window_length_secs=window_length_secs,
     sliding_window_secs=sliding_window_secs,
 )
 
-whisperModel = whisper.load_model("base.en")
+whisperModel = whisper.load_model("tiny.en")
 
 def restart_mic_stream():
     mic_stream.close_stream()
@@ -58,7 +59,7 @@ def restart_mic_stream():
 if __name__ == "__main__":
     mic_stream.start_stream()
 
-    print("Say Mycroft ")
+    print("Say Hey Bro ")
 
     recordState = False
     recordedArray = []
@@ -67,18 +68,18 @@ if __name__ == "__main__":
         frame = mic_stream.getFrame().astype(np.int16)
 
         if recordState is False:
-            result = mycroft_hw.scoreFrame(frame.copy())
+            result = mycroft_hw.scoreFrame(frame)
             if result==None :
                 #no voice activity
                 continue
             if(result["match"]):
-                say("listening.")
+                say("listening, my master.")
                 restart_mic_stream()
                 recordState = True
                 lastHotwordSecond = time.time()
         else:
             # The actual length is every sliding_window_secs time
-            frame = frame[int(sliding_window_secs * 16000):].copy()
+            frame = frame[int(sliding_window_secs * 16000):]
             normalizedframe = (
                 frame.astype('float32') * (1 / 32768.0))
             vadExists = checkVad(normalizedframe)
@@ -86,9 +87,9 @@ if __name__ == "__main__":
             if vadExists:
                 lastHotwordSecond = time.time()
 
-            if (time.time() - lastHotwordSecond) < 2.0:
-                recordedArray.append(normalizedframe)
-            else:
+            recordedArray.append(normalizedframe)
+
+            if (time.time() - lastHotwordSecond) > window_length_secs:
                 say("processing")
                 # wavwrite('test.wav', 16000, np.concatenate(recordedArray, dtype=np.float32))
                 result = whisperModel.transcribe(
@@ -101,28 +102,3 @@ if __name__ == "__main__":
                 recordState = False
                 recordedArray = []
                 restart_mic_stream()
-
-        # if vadExists or (recordState == True and (time.time() - lastHotwordSecond) < 0.5):
-        #     print("vad")
-        #     if recordState:
-        #         recordedArray.append(normalizedframe)
-        #     else:
-        #         result = mycroft_hw.scoreFrame(frame)
-        #         if result==None :
-        #             #no voice activity
-        #             continue
-        #         if(result["match"]):
-        #             say("listening")
-        #             recordState = True
-        #             lastHotwordSecond = time.time()
-        # else:
-        #     if recordState:
-        #         say("transcribing")
-        #         print(np.concatenate(recordedArray).shape)
-        #         print(np.concatenate(recordedArray).dtype)
-        #         result = whisperModel.transcribe(np.concatenate(recordedArray))
-        #         say("running llm")
-        #         print(result["text"])
-        #         run_llm(result["text"])
-        #         recordState = False
-        #         recordedArray = []

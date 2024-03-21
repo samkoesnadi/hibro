@@ -21,7 +21,7 @@ functionsDict = {
         "function": control_lamp_function,
         "metadata": {
             "function": "control_lamp",
-            "description": "Turn on or off the lamp. This allows users to turn on or off the lamp which is determine by the on_off argument.",
+            "description": "The user can use this function by setting the on_off argument.",
             "arguments": [
                 {
                     "name": "on_off",
@@ -35,13 +35,13 @@ functionsDict = {
 
 functionList = ''
 for key, value in functionsDict.items():
-    functionList += json.dumps(value["metadata"], indent=1, separators=(',', ': '))
+    functionList += json.dumps(value["metadata"], separators=(',', ': '))
 
 printable = set(string.printable)
 
 def run_llm(prompt):
     output = llm(
-f"""<s> <FUNCTIONS>{functionList}</FUNCTIONS>
+f"""<s><<SYS>>I am a home assistant that switch on and off lamp. When using function, it outputs json with "function" and "argument"<</SYS>> <FUNCTION>{functionList}</FUNCTION>
 [INST] {prompt} [/INST]
 """, # Prompt
         max_tokens=TOKEN_LENGTH,  # Generate up to 512 tokens
@@ -56,7 +56,9 @@ f"""<s> <FUNCTIONS>{functionList}</FUNCTIONS>
     output = output["choices"][0]["text"]
     output = output.strip()
 
+
     try:
+        output = output.lower()
         output = json.loads(output)
     except json.decoder.JSONDecodeError:
         output = ''.join(filter(lambda x: x in printable, output))
@@ -64,8 +66,13 @@ f"""<s> <FUNCTIONS>{functionList}</FUNCTIONS>
         return
 
     if "function" in output:
+        arguments = output["arguments"]
+        if isinstance(output["arguments"], list):
+            arguments = {argument["name"]: argument["value"] for argument in output["arguments"]}
         functionsDict[output["function"]]["function"](
-            **output["arguments"])
+            **arguments)
         return
+    elif "error" in output:
+        say("Error: " + output["error"])
     else:
-        say("There is something wrong with the program.")
+        say("There is something wrong with reading the llm json output.")
